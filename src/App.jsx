@@ -887,7 +887,7 @@ export default function App(){
       <div style={{display:"flex",alignItems:"center",height:44,padding:"0 14px",borderBottom:`1px solid ${P.grid}`,flexShrink:0,gap:8,background:P.paper}}>
 
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:18,fontStyle:"italic",letterSpacing:"-.1px",lineHeight:1,marginRight:4}}>
-          nodeflow
+          bluePrint
           <span style={{fontStyle:"normal",fontSize:10,fontFamily:"'Courier Prime',monospace",color:P.dim,marginLeft:5,letterSpacing:1}}>STUDIO</span>
         </div>
 
