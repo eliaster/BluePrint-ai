@@ -36,9 +36,24 @@ const PROVIDERS = [
   { id:"custom",    label:"Custom (OpenAI-compatible)", hasKey:true, hasUrl:true, defaultModel:"", urlPlaceholder:"http://localhost:8080" },
 ];
 
-const SYSTEM_PROMPT = `You are a software architecture analyzer. Return ONLY valid JSON (no fences):
-{"nodes":[{"id":"n1","label":"Short Label","type":"process|data|api|ui|external","desc":"one-line","x":100,"y":150}],"edges":[{"id":"e1","from":"n1","to":"n2","label":"flow","bidir":false}]}
-Rules: 6-14 nodes, 5-16 edges. x 80-1280 y 80-520. labels max 4 words title-case. desc max 8 words. bidir only genuine two-way flows. Show REAL architecture: entry→logic→data→external.`;
+const SYSTEM_PROMPT = `You are a professional software architect. Analyze the provided input and output a technical system diagram.
+RETURN ONLY A RAW JSON OBJECT. DO NOT USE MARKDOWN CODE FENCES (\`\`\`), PREAMBLES, OR EXPLANATIONS.
+{
+  "nodes": [
+    {"id": "n1", "label": "Title Case Label", "type": "process|data|api|ui|external", "desc": "Short technical description", "x": 100, "y": 150}
+  ],
+  "edges": [
+    {"id": "e1", "from": "n1", "to": "n2", "label": "Action/Data Flow", "bidir": false}
+  ]
+}
+CONSTRAINTS:
+Nodes: 6-14 total.
+Edges: 5-16 total.
+Canvas: x: [80, 1280], y: [80, 520].
+Text: Labels < 4 words (Title Case). Descriptions < 8 words.
+Logic: Ensure a logical flow (Entry -> Controller/Logic -> Data Store -> External API).
+Spatiality: Place entry points on the left (low x) and external systems on the right (high x).`;
+
 
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem("bp_settings") || "{}"); } catch { return {}; }
