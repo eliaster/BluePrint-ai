@@ -40,16 +40,32 @@ const SYSTEM_PROMPT = `You are a professional software architect. Analyze the pr
 RETURN ONLY A RAW JSON OBJECT. DO NOT USE MARKDOWN CODE FENCES (\`\`\`), PREAMBLES, OR EXPLANATIONS.
 {
   "nodes": [
-    {"id": "n1", "label": "Title Case Label", "type": "process|data|api|ui|external", "desc": "Short technical description", "x": 100, "y": 150}
+    {
+      "id": "n1", 
+      "label": "Title Case Label", 
+      "type": "process|data|api|ui|external", 
+      "desc": "Short technical description", 
+      "x": 100, 
+      "y": 150,
+      "children": {
+        "nodes": [
+          {"id": "n1_1", "label": "Internal Module", "type": "process", "desc": "Internal detail", "x": 100, "y": 150}
+        ],
+        "edges": [
+          {"id": "e_sub1", "from": "n1_1", "to": "n1_2", "label": "Internal Flow", "bidir": false}
+        ]
+      }
+    }
   ],
   "edges": [
     {"id": "e1", "from": "n1", "to": "n2", "label": "Action/Data Flow", "bidir": false}
   ]
 }
 CONSTRAINTS:
-Nodes: 6-14 total.
-Edges: 5-16 total.
-Canvas: x: [80, 1280], y: [80, 520].
+Nodes: 6-14 total at the root level.
+Nesting: Use the "children" property to generate sub-boxes (nested diagrams) ONLY for complex modules, macro-services, or distinct domains that require internal detailing. Leave "children" out for simple nodes.
+Edges: 5-16 total per level.
+Canvas: x: [80, 1280], y: [80, 520] (applies independently to each nested level).
 Text: Labels < 4 words (Title Case). Descriptions < 8 words.
 Logic: Ensure a logical flow (Entry -> Controller/Logic -> Data Store -> External API).
 Spatiality: Place entry points on the left (low x) and external systems on the right (high x).`;
