@@ -103,11 +103,9 @@ NODE_TYPES = {
 | Condition | Auto scenario |
 |---|---|
 | `aiBaseDiagram === null` | **New Project** |
-| `aiBaseDiagram` exists + diff has added nodes | **Add Feature** |
-| `aiBaseDiagram` exists + diff has only modified/removed nodes | **Modify Existing** |
-| `aiBaseDiagram` exists + diff has both added AND modified nodes | **Add Feature** (additions take priority) |
+| `aiBaseDiagram` exists (any diff) | **Update Existing** |
 
-A segmented control in the topbar shows the auto-detected value (`auto: New Project`). The user can override it; the badge changes to `override: Add Feature` with an `×` to revert to auto.
+A segmented control in the topbar shows the auto-detected value (`auto: New Project`). The user can override it; the badge changes to `override: Update Existing` with an `×` to revert to auto.
 
 ### Output format
 
@@ -119,7 +117,7 @@ The title defaults to the project name detected during file analysis (from `file
 ## Context
 [What is being built and why]
 
-## Scenario: New Project | Add Feature | Modify Existing
+## Scenario: New Project | Update Existing
 [Scenario-specific section — see below]
 
 ## Architecture Overview
@@ -194,21 +192,14 @@ Suggested directory layout based on architecture:
 [No files loaded — Claude Code confirms stack before proceeding]
 ```
 
-**Add Feature** adds:
+**Update Existing** adds:
 ```
-## What Already Exists
+## Current Architecture
 [Baseline node summary from aiBaseDiagram]
 
-## What To Add
-[Only newly added nodes from diff]
-Do NOT modify existing modules unless explicitly listed below.
-```
-
-**Modify Existing** adds the existing diff section plus:
-```
-## Modifications Required
-[modified / removed nodes from diff]
-Modify only the listed components. Preserve all other behaviour.
+## Changes Required
+[Full diff: added nodes, removed nodes, modified nodes, changed edges]
+Implement all listed changes. Preserve everything not mentioned.
 ```
 
 ---
@@ -254,8 +245,8 @@ ON ERROR
 [ auto: New Project ▾ ]    generate prompt →
 ```
 
-Dropdown options: `New Project` / `Add Feature` / `Modify Existing`.
-When overridden: `[ override: Add Feature ▾ × ]`.
+Dropdown options: `New Project` / `Update Existing`.
+When overridden: `[ override: Update Existing ▾ × ]`.
 
 ---
 
