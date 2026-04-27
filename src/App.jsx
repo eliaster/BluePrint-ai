@@ -640,6 +640,22 @@ function computeDiagramDiff(base, current, path="root"){
   return results;
 }
 
+function NodeBg({type, isSel, isSrc, isBoundary}) {
+  const t  = NODE_TYPES[type] || NODE_TYPES.process;
+  const bg = isBoundary ? "#f0ede0" : t.color.bg;
+  const bd = isBoundary ? "#8a8880" : t.color.bd;
+  const sw = isSel || isSrc ? 1 : 0.55;
+  if (t.shape === "diamond") {
+    const pts = `${NW/2},0 ${NW},${NH/2} ${NW/2},${NH} 0,${NH/2}`;
+    return <polygon points={pts} fill={bg} stroke={bd} strokeWidth={sw}/>;
+  }
+  if (t.shape === "rounded") {
+    return <rect x={0} y={0} width={NW} height={NH} rx={12} fill={bg} stroke={bd} strokeWidth={sw}/>;
+  }
+  const dash = type === "error" ? "6 3" : (isBoundary ? "5 3" : undefined);
+  return <rect x={0} y={0} width={NW} height={NH} fill={bg} stroke={bd} strokeWidth={sw} strokeDasharray={dash}/>;
+}
+
 function Label({children}){return <div style={{fontSize:9,fontWeight:700,letterSpacing:1.8,color:"#8a8880",marginTop:4}}>{children}</div>;}
 function HR(){return <div style={{borderTop:"1px solid #e4e1d8",margin:"4px 0"}}/>;}
 
@@ -1374,18 +1390,36 @@ export default function App(){
                     onDoubleClick={e=>{e.stopPropagation();if(mode==="SELECT"&&!isBoundary)enterNode(n);}}
                     style={{cursor:mode==="DELETE"?"not-allowed":mode==="ADD_EDGE"?"crosshair":"grab"}}>
                     {(isSel||isSrc)&&<rect x={-5} y={-5} width={NW+10} height={NH+10} fill="none" stroke={P.ink} strokeWidth={.8} strokeDasharray="4 3"/>}
-                    <rect x={0} y={0} width={NW} height={NH}
-                      fill={isBoundary?"#f0ede0":nodeFill(n.type)}
-                      stroke={isBoundary?P.dim:P.ink}
-                      strokeWidth={isSel||isSrc?1:.55}
-                      strokeDasharray={isBoundary?"5 3":undefined}/>
-                    <text x={9} y={15} fontSize={7.5} fill={P.dim} fontFamily="'Courier Prime',monospace" fontWeight="700" letterSpacing={1.5}>
-                      {isBoundary?(n._boundary==="input"?"INPUT ▶":"▶ OUTPUT"):n.type.toUpperCase()}
-                    </text>
-                    <text x={NW/2} y={n.desc?NH/2+3:NH/2+6} textAnchor="middle" fontSize={14} fill={P.ink} fontFamily="'Instrument Serif',serif" fontStyle="italic">
-                      {n.label.length>22?n.label.slice(0,20)+"…":n.label}
-                    </text>
-                    {n.desc&&<text x={NW/2} y={NH-10} textAnchor="middle" fontSize={9} fill={P.dim} fontFamily="'Courier Prime',monospace">{n.desc.length>28?n.desc.slice(0,26)+"…":n.desc}</text>}
+                    <NodeBg type={n.type} isSel={isSel} isSrc={isSrc} isBoundary={isBoundary}/>
+
+                    {isBoundary
+                      ? <text x={9} y={15} fontSize={7.5} fill={P.dim} fontFamily="'Courier Prime',monospace" fontWeight="700" letterSpacing={1.5}>{n._boundary==="input"?"INPUT ▶":"▶ OUTPUT"}</text>
+                      : n.type==="trigger"
+                        ? (()=>{
+                            const cat=(n.triggerType||"User Action").replace("/Cron","").toUpperCase();
+                            return <text x={NW/2} y={13} textAnchor="middle" fontSize={7} fill={NODE_TYPES.trigger.color.bd} fontFamily="'Courier Prime',monospace" fontWeight="700" letterSpacing={1.2}>⚡ {cat}</text>;
+                          })()
+                        : <text x={9} y={15} fontSize={7.5} fill={P.dim} fontFamily="'Courier Prime',monospace" fontWeight="700" letterSpacing={1.5}>
+                            {(NODE_TYPES[n.type]?.label||n.type).toUpperCase()}{n.type==="loop"?" ↻":n.type==="error"?" ⚠":""}
+                          </text>
+                    }
+
+                    {n.type==="decision"
+                      ? <text x={NW/2} y={NH/2+5} textAnchor="middle" fontSize={13} fill={P.ink} fontFamily="'Instrument Serif',serif" fontStyle="italic">
+                          {n.label.length>18?n.label.slice(0,16)+"…":n.label}
+                        </text>
+                      : <text x={NW/2} y={(n.desc||(n.type==="loop"&&n.iterateOver))?NH/2+3:NH/2+6} textAnchor="middle" fontSize={14} fill={P.ink} fontFamily="'Instrument Serif',serif" fontStyle="italic">
+                          {n.label.length>22?n.label.slice(0,20)+"…":n.label}
+                        </text>
+                    }
+
+                    {n.desc&&n.type!=="loop"&&<text x={NW/2} y={NH-10} textAnchor="middle" fontSize={9} fill={P.dim} fontFamily="'Courier Prime',monospace">{n.desc.length>28?n.desc.slice(0,26)+"…":n.desc}</text>}
+
+                    {n.type==="loop"&&n.iterateOver&&!isBoundary&&(
+                      <text x={NW/2} y={NH-9} textAnchor="middle" fontSize={8} fill={P.dim} fontFamily="'Courier Prime',monospace" fontStyle="italic">
+                        {n.iterateOver.length>22?n.iterateOver.slice(0,20)+"…":n.iterateOver}
+                      </text>
+                    )}
                     {isSel&&[[0,0],[NW,0],[NW,NH],[0,NH]].map(([cx,cy],i)=>(
                       <rect key={i} x={cx-2.5} y={cy-2.5} width={5} height={5} fill={P.ink}/>
                     ))}
