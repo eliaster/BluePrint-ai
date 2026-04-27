@@ -640,6 +640,26 @@ function computeDiagramDiff(base, current, path="root"){
   return results;
 }
 
+function topoSort(nodes, edges) {
+  const inDeg={}, adj={};
+  nodes.forEach(n=>{ inDeg[n.id]=0; adj[n.id]=[]; });
+  edges.forEach(e=>{
+    if(adj[e.from]&&inDeg[e.to]!==undefined&&e.kind!=="error"){
+      adj[e.from].push(e.to);
+      inDeg[e.to]++;
+    }
+  });
+  const queue=nodes.filter(n=>inDeg[n.id]===0).map(n=>n.id);
+  const result=[];
+  while(queue.length){
+    const cur=queue.shift();
+    result.push(cur);
+    for(const nb of (adj[cur]||[])){ if(--inDeg[nb]===0) queue.push(nb); }
+  }
+  nodes.forEach(n=>{ if(!result.includes(n.id)) result.push(n.id); });
+  return result.map(id=>nodes.find(n=>n.id===id)).filter(Boolean);
+}
+
 function NodeBg({type, isSel, isSrc, isBoundary}) {
   const t  = NODE_TYPES[type] || NODE_TYPES.process;
   const bg = isBoundary ? "#f0ede0" : t.color.bg;
@@ -678,6 +698,7 @@ export default function App(){
   const [err,setErr]           = useState("");
   const [fileInfo,setFileInfo] = useState(null);
   const [promptTxt,setPromptTxt]=useState("");
+  const [promptTitle,setPromptTitle] = useState("Untitled Project");
   const [copied,setCopied]     = useState(false);
   const [panel,setPanel]       = useState("files");
   const [dragging,setDragging] = useState(false);
@@ -907,6 +928,7 @@ export default function App(){
     const relevant=arr.filter(f=>RELEVANT.test(f.name)&&!SKIP.test(f.webkitRelativePath||f.name));
     const projectName=arr[0]?.webkitRelativePath?.split("/")[0]||arr[0]?.name||"project";
     setFileInfo({name:projectName,count:relevant.length,total:arr.length});
+    setPromptTitle(arr[0]?.webkitRelativePath?.split("/")[0]||arr[0]?.name||"project");
     setErr("");
     if(!relevant.length){setErr("No supported source files found.");return;}
     setBusy(true);
@@ -969,51 +991,115 @@ export default function App(){
 
   // ── prompt ───────────────────────────────────────────────────────────────────
   const generatePrompt=()=>{
-    const renderDiagram=(diagram, depth=0)=>{
-      const pad="  ".repeat(depth);
-      const nl=diagram.nodes.map(n=>{
-        const ins=(n.inputs||[]).map(p=>`${p.name}:${p.type}`).join(", ");
-        const outs=(n.outputs||[]).map(p=>`${p.name}:${p.type}`).join(", ");
-        const portLine=ins||outs?`\n${pad}  Ports: in(${ins||"—"}) out(${outs||"—"})`:"";
-        const childSection=n.children?.nodes?.length
-          ? `\n${pad}  Children:\n${renderDiagram(n.children, depth+2)}`
-          : "";
-        return `${pad}- **${n.label}** [${n.type}]${n.desc?": "+n.desc:""}${portLine}${childSection}`;
-      }).join("\n");
-      const el=diagram.edges.map(e=>{
-        const fn=diagram.nodes.find(n=>n.id===e.from)?.label||"?";
-        const tn=diagram.nodes.find(n=>n.id===e.to)?.label||"?";
-        return `${pad}  ${fn} ${e.bidir?"↔":"→"} ${tn}${e.label?` (${e.label})`:""}`;
-      }).join("\n");
-      return [nl,el].filter(Boolean).join("\n");
-    };
+    const allNodes=rootDiagram.nodes, allEdges=rootDiagram.edges;
+    const nLabel=id=>allNodes.find(n=>n.id===id)?.label||id;
+    const outEdgesOf=id=>allEdges.filter(e=>e.from===id&&e.kind!=="error");
+    const errEdgesOf=id=>allEdges.filter(e=>e.from===id&&e.kind==="error");
+    const sorted=topoSort(allNodes,allEdges);
+    const stepNum={}; sorted.forEach((n,i)=>stepNum[n.id]=i+1);
+    const scenario=activeScenario;
 
-    let diffSection="";
-    if(aiBaseDiagram){
-      const diffs=computeDiagramDiff(aiBaseDiagram,rootDiagram);
-      if(diffs.length){
-        const lines=["\n## Modifications from AI baseline\n","Apply these user-defined changes on top of the architecture above:\n"];
-        diffs.forEach(({path,added,removed,modified,addedE,removedE,baseNodes})=>{
-          lines.push(`### ${path}`);
-          added.forEach(n=>lines.push(`- Added node: **${n.label}** [${n.type}]${n.desc?": "+n.desc:""}`));
-          removed.forEach(n=>lines.push(`- Removed node: **${n.label}** [${n.type}]`));
-          modified.forEach(n=>{
-            const o=baseNodes.find(x=>x.id===n.id);
-            const ch=[];
-            if(o?.label!==n.label) ch.push(`label "${o?.label}" → "${n.label}"`);
-            if(o?.type!==n.type) ch.push(`type ${o?.type} → ${n.type}`);
-            if(o?.desc!==n.desc) ch.push(`desc "${o?.desc||""}" → "${n.desc||""}"`);
-            lines.push(`- Modified **${n.label}**: ${ch.join(", ")}`);
-          });
-          addedE.forEach(e=>lines.push(`- Added connection: ${e.fromLabel} ${e.bidir?"↔":"→"} ${e.toLabel}${e.label?" ("+e.label+")":""}`));
-          removedE.forEach(e=>lines.push(`- Removed connection: ${e.fromLabel} ${e.bidir?"↔":"→"} ${e.toLabel}${e.label?" ("+e.label+")":""}`));
-          lines.push("");
+    // Entry Points
+    const triggers=sorted.filter(n=>n.type==="trigger");
+    const entrySection=triggers.length
+      ? `## Entry Points\n\n${triggers.map(n=>{
+          const cat=n.triggerType||"User Action";
+          const firstOut=outEdgesOf(n.id)[0];
+          const flowStart=firstOut?`Step ${stepNum[firstOut.to]} — ${nLabel(firstOut.to)}`:"(no outgoing connections)";
+          return `### ⚡ Trigger: ${n.label} [${cat}]\nEvent: ${n.triggerDetail||"(no detail)"}\nStarts flow: ${flowStart}`;
+        }).join("\n\n")}\n\n`
+      : "";
+
+    // Implementation Steps (skip triggers and error handlers)
+    const stepNodes=sorted.filter(n=>n.type!=="trigger"&&n.type!=="error");
+    const stepsSection=`## Implementation Steps\n\n${stepNodes.map(n=>{
+      const num=stepNum[n.id];
+      const role=NODE_TYPES[n.type]?.promptRole||n.type;
+      let body=`### Step ${num} — ${n.label} [${role}]`;
+      if(n.desc) body+=`\n${n.desc}`;
+      if(n.type==="decision"){
+        body+=`\nCondition: ${n.label}`;
+        outEdgesOf(n.id).forEach(e=>{
+          body+=`\n  → "${e.label||"(branch)"}" : proceed to Step ${stepNum[e.to]||"?"} — ${nLabel(e.to)}`;
         });
-        diffSection=lines.join("\n");
+      } else if(n.type==="loop"){
+        body+=`\nIterates over: ${n.iterateOver||"(collection)"}`;
+        if(n.children?.nodes?.length){
+          body+=`\nFor each iteration:\n${n.children.nodes.map((c,i)=>(
+            `  - Step ${num}.${i+1} — ${c.label} [${NODE_TYPES[c.type]?.promptRole||c.type}]`
+          )).join("\n")}`;
+        }
+      } else {
+        const nexts=outEdgesOf(n.id);
+        if(nexts.length) body+=`\nOutputs to: ${nexts.map(e=>`Step ${stepNum[e.to]||"?"} — ${nLabel(e.to)}${e.label?" ("+e.label+")":""}`).join(", ")}`;
       }
+      return body;
+    }).join("\n\n")}\n\n`;
+
+    // Error Handling
+    const errorEdges=allEdges.filter(e=>e.kind==="error");
+    const errorSection=errorEdges.length
+      ? `## Error Handling\n\n${errorEdges.map(e=>{
+          const src=nLabel(e.from);
+          const dst=allNodes.find(n=>n.id===e.to);
+          let body=`### ⚠ onError from: ${src}\nHandler: ${dst?.label||"(unknown)"}`;
+          if(dst?.children?.nodes?.length){
+            body+=`\nRecovery logic:\n${dst.children.nodes.map((c,i)=>(
+              `  - Step E${i+1} — ${c.label} [${NODE_TYPES[c.type]?.promptRole||c.type}]`
+            )).join("\n")}`;
+          }
+          return body;
+        }).join("\n\n")}\n\n`
+      : "";
+
+    // Data Flow Summary
+    const flowSection=`## Data Flow Summary\n\n${allEdges.filter(e=>e.kind!=="error").map(e=>{
+      const fn=nLabel(e.from), tn=nLabel(e.to);
+      return `${fn} ${e.bidir?"↔":"→"} ${tn}${e.label?" ("+e.label+")":""}`;
+    }).join("\n")}\n\n`;
+
+    // Scenario-specific sections
+    let scenarioSpecific="";
+    if(scenario==="new"){
+      scenarioSpecific=`## Project Structure\n\nSuggested directory layout:\n\`\`\`\n/src\n  /triggers   ← Trigger nodes\n  /handlers   ← Process / API nodes\n  /models     ← Data nodes\n  /errors     ← Error Handler nodes\n\`\`\`\n\n## Stack\n\n[No files loaded — confirm tech stack with Claude Code before proceeding]\n\n`;
+    } else {
+      const diffs=aiBaseDiagram?computeDiagramDiff(aiBaseDiagram,rootDiagram):[];
+      const hasChanges=diffs.some(d=>d.added.length||d.removed.length||d.modified.length||d.addedE.length||d.removedE.length);
+      const baseList=(aiBaseDiagram?.nodes||allNodes).map(n=>`- **${n.label}** [${n.type}]${n.desc?": "+n.desc:""}`).join("\n");
+      const changeLines=hasChanges?diffs.flatMap(({path,added,removed,modified,addedE,removedE,baseNodes})=>{
+        const ls=[];
+        if(added.length||removed.length||modified.length||addedE.length||removedE.length) ls.push(`### ${path}`);
+        added.forEach(n=>ls.push(`- Add node: **${n.label}** [${n.type}]${n.desc?": "+n.desc:""}`));
+        removed.forEach(n=>ls.push(`- Remove node: **${n.label}** [${n.type}]`));
+        modified.forEach(n=>{
+          const o=baseNodes?.find(x=>x.id===n.id);
+          const ch=[];
+          if(o?.label!==n.label) ch.push(`label "${o?.label}" → "${n.label}"`);
+          if(o?.type!==n.type)   ch.push(`type ${o?.type} → ${n.type}`);
+          if(o?.desc!==n.desc)   ch.push(`desc "${o?.desc||""}" → "${n.desc||""}"`);
+          ls.push(`- Modify **${n.label}**: ${ch.join(", ")}`);
+        });
+        addedE.forEach(e=>ls.push(`- Add connection: ${e.fromLabel} ${e.bidir?"↔":"→"} ${e.toLabel}${e.label?" ("+e.label+")":""}`));
+        removedE.forEach(e=>ls.push(`- Remove connection: ${e.fromLabel} ${e.bidir?"↔":"→"} ${e.toLabel}${e.label?" ("+e.label+")":""}`));
+        return ls;
+      }).join("\n"):"(no changes from AI baseline)";
+      scenarioSpecific=`## Current Architecture\n\n${baseList}\n\n## Changes Required\n\n${changeLines}\n\nImplement all listed changes. Preserve everything not mentioned.\n\n`;
     }
 
-    setPromptTxt(`# Architecture refactoring blueprint\n\nRestructure the codebase to implement the architecture below exactly.\n\n## Modules / components\n\n${renderDiagram(rootDiagram)}${diffSection}\n## Steps\n\n1. Create module/directory structure matching the components above\n2. Implement each with a single clear responsibility matching its type\n3. Wire data flows exactly as specified — no extra coupling\n4. Define clean interfaces at every boundary\n5. Preserve all existing business logic\n6. Add types and annotations throughout\n7. Write unit tests for every new or changed module\n8. Update all imports, exports, dependency declarations\n\nWork from data layer outward: data stores → services → API → UI.\nConfirm each step before proceeding.`);
+    const scenarioLabel=scenario==="new"?"New Project":"Update Existing";
+    const contextLine=scenario==="new"
+      ? `Build ${promptTitle} from scratch following the architecture below.`
+      : `Update ${promptTitle} to implement the changes described below.`;
+
+    setPromptTxt(
+      `# ${promptTitle} — Implementation Plan\n\n` +
+      `## Context\n\n${contextLine}\n\n` +
+      `## Scenario: ${scenarioLabel}\n\n` +
+      scenarioSpecific +
+      `## Architecture Overview\n\n` +
+      allNodes.map(n=>`- **${n.label}** [${NODE_TYPES[n.type]?.promptRole||n.type}]${n.desc?": "+n.desc:""}`).join("\n") +
+      `\n\n${entrySection}${stepsSection}${errorSection}${flowSection}`
+    );
     setPanel("prompt");
   };
 
@@ -1350,6 +1436,9 @@ export default function App(){
 
             {/* PROMPT */}
             {panel==="prompt"&&(<>
+              <Label>project name</Label>
+              <input value={promptTitle} onChange={e=>setPromptTitle(e.target.value)} placeholder="Untitled Project" style={IS}/>
+              <HR/>
               <Label>claude code prompt</Label>
               {!promptTxt
                 ?<div style={{fontSize:10,color:P.dim,fontStyle:"italic",lineHeight:2}}>press "generate prompt →" in the top bar</div>
