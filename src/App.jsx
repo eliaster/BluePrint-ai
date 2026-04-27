@@ -5,12 +5,30 @@ const NW = 200, NH = 72, G = 24;
 const uid  = () => Math.random().toString(36).slice(2, 10);
 const snap = v  => Math.round(v / G) * G;
 
-const NT = {
-  process:  { label: "Process"    },
-  data:     { label: "Data Store" },
-  api:      { label: "API"        },
-  ui:       { label: "UI Layer"   },
-  external: { label: "External"   },
+const NODE_TYPES = {
+  process:  { label:"Process",       shape:"rect",    color:{bg:"#fdfcf8",bd:"#1c1b17"}, fields:[],
+              promptRole:"step" },
+  data:     { label:"Data Store",    shape:"rect",    color:{bg:"#f0ece0",bd:"#1c1b17"}, fields:[],
+              promptRole:"datastore" },
+  api:      { label:"API",           shape:"rect",    color:{bg:"#f5f2e8",bd:"#1c1b17"}, fields:[],
+              promptRole:"api" },
+  ui:       { label:"UI Layer",      shape:"rect",    color:{bg:"#fdfcf8",bd:"#1c1b17"}, fields:[],
+              promptRole:"ui" },
+  external: { label:"External",      shape:"rect",    color:{bg:"#edeadf",bd:"#1c1b17"}, fields:[],
+              promptRole:"external" },
+  decision: { label:"Decision",      shape:"diamond", color:{bg:"#f5f0e8",bd:"#8a7a5a"}, fields:[],
+              promptRole:"branch" },
+  loop:     { label:"Loop",          shape:"rect",    color:{bg:"#eaf0f5",bd:"#5a7a8a"},
+              fields:[{key:"iterateOver",label:"iterate over",placeholder:"orders[], range(0,10)…"}],
+              hasChildren:true, promptRole:"iteration" },
+  trigger:  { label:"Trigger",       shape:"rounded", color:{bg:"#eef5ea",bd:"#5a8a5a"},
+              fields:[
+                {key:"triggerType",   label:"type",   type:"select", options:["User Action","Timer/Cron","Webhook","System Event"]},
+                {key:"triggerDetail", label:"detail", placeholder:"POST /api/orders…"},
+              ],
+              promptRole:"trigger" },
+  error:    { label:"Error Handler", shape:"rect",    color:{bg:"#f5eaea",bd:"#8a3a3a"}, fields:[],
+              hasChildren:true, promptRole:"error" },
 };
 const MODES = [
   { id:"SELECT",   icon:"↖", label:"Select"  },
@@ -27,7 +45,7 @@ const LAYOUT_OPTIONS = [
 ];
 const RELEVANT = /\.(js|ts|jsx|tsx|py|go|rs|java|rb|c|cpp|h|cs|swift|kt|json|yaml|yml|toml|md)$/i;
 const SKIP     = /node_modules|\.git|dist|build|\.next|__pycache__|vendor|\.cache|coverage/i;
-const MAX_FILES = 18, MAX_CHARS = 2800;
+const MAX_FILES = 30, CHUNK_SIZE = 3500, MAX_CHUNKS = 40;
 
 const PROVIDERS = [
   { id:"anthropic", label:"Anthropic",      hasKey:true,  hasUrl:false, defaultModel:"claude-sonnet-4-5",     urlPlaceholder:"" },
@@ -36,23 +54,28 @@ const PROVIDERS = [
   { id:"custom",    label:"Custom (OpenAI-compatible)", hasKey:true, hasUrl:true, defaultModel:"", urlPlaceholder:"http://localhost:8080" },
 ];
 
-const SYSTEM_PROMPT = `You are a professional software architect. Analyze the provided input and output a technical system diagram.
-RETURN ONLY A RAW JSON OBJECT. DO NOT USE MARKDOWN CODE FENCES (\`\`\`), PREAMBLES, OR EXPLANATIONS.
+const CHUNK_SUMMARY_PROMPT = `You are a senior software engineer. Analyze this code excerpt and write a concise technical summary in 3-4 sentences covering: main purpose, key components or classes, and data flow. Output plain text only, no formatting, no markdown.`;
+
+const SYNTHESIS_PROMPT = `You are a professional software architect. Given the module summaries below, output a technical system diagram as a raw JSON object.
+RETURN ONLY A RAW JSON OBJECT. NO MARKDOWN FENCES, NO PREAMBLE, NO EXPLANATION.
+
+Required schema:
 {
   "nodes": [
     {
-      "id": "n1", 
-      "label": "Title Case Label", 
-      "type": "process|data|api|ui|external", 
-      "desc": "Short technical description", 
-      "x": 100, 
+      "id": "n1",
+      "label": "Title Case Label",
+      "type": "process|data|api|ui|external",
+      "desc": "Short technical description",
+      "x": 100,
       "y": 150,
       "children": {
         "nodes": [
-          {"id": "n1_1", "label": "Internal Module", "type": "process", "desc": "Internal detail", "x": 100, "y": 150}
+          {"id": "n1_1", "label": "Sub Module", "type": "process", "desc": "Internal detail", "x": 100, "y": 150},
+          {"id": "n1_2", "label": "Handler", "type": "process", "desc": "Handles requests", "x": 400, "y": 150}
         ],
         "edges": [
-          {"id": "e_sub1", "from": "n1_1", "to": "n1_2", "label": "Internal Flow", "bidir": false}
+          {"id": "e_sub1", "from": "n1_1", "to": "n1_2", "label": "delegates", "bidir": false}
         ]
       }
     }
@@ -61,14 +84,18 @@ RETURN ONLY A RAW JSON OBJECT. DO NOT USE MARKDOWN CODE FENCES (\`\`\`), PREAMBL
     {"id": "e1", "from": "n1", "to": "n2", "label": "Action/Data Flow", "bidir": false}
   ]
 }
-CONSTRAINTS:
-Nodes: 6-14 total at the root level.
-Nesting: Use the "children" property to generate sub-boxes (nested diagrams) ONLY for complex modules, macro-services, or distinct domains that require internal detailing. Leave "children" out for simple nodes.
-Edges: 5-16 total per level.
-Canvas: x: [80, 1280], y: [80, 520] (applies independently to each nested level).
-Text: Labels < 4 words (Title Case). Descriptions < 8 words.
-Logic: Ensure a logical flow (Entry -> Controller/Logic -> Data Store -> External API).
-Spatiality: Place entry points on the left (low x) and external systems on the right (high x).`;
+
+ROOT CONSTRAINTS:
+- 6-14 root nodes total. 5-16 root edges.
+- Canvas: x [80, 1280], y [80, 520]. Entry points left (low x), external systems right (high x).
+- Labels: Title Case, < 4 words. Descriptions: < 8 words.
+- Logical flow: Entry → Gateway/Router → Core Services → Data Store → External.
+
+NESTING (important — generate rich sub-diagrams):
+- Add "children" to every node that wraps a service, layer, or module with identifiable internal sub-components. Target: at least half of process/api/ui nodes should have children.
+- Each children block: 2-5 nodes, 1-4 edges. Children canvas: x [80, 900], y [80, 450].
+- Derive child nodes from the module summaries: map internal functions, classes, or layers to child nodes.
+- Use type "external" for boundary nodes at the edges of the children canvas (representing connections to/from the parent level).`;
 
 
 function loadSettings() {
@@ -498,63 +525,121 @@ function readFile(file){
   return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsText(file,"utf-8");});
 }
 
-async function analyzeLocalFiles(files, setStatus, settings){
-  const {provider, model, apiKeys, baseUrl} = settings;
-  const relevant=[...files].filter(f=>RELEVANT.test(f.name)&&!SKIP.test(f.webkitRelativePath||f.name))
-    .sort((a,b)=>scoreFile(a.webkitRelativePath||a.name)-scoreFile(b.webkitRelativePath||b.name)).slice(0,MAX_FILES);
-  if(!relevant.length) throw new Error("No supported source files found.");
-  setStatus(`reading ${relevant.length} files…`);
-  const chunks=await Promise.all(relevant.map(async f=>{
-    try{const t=await readFile(f);return `=== ${f.webkitRelativePath||f.name} ===\n${t.slice(0,MAX_CHARS)}`;}catch{return null;}
-  }));
-  const corpus=chunks.filter(Boolean).join("\n\n");
-  const projectName=relevant[0]?.webkitRelativePath?.split("/")[0]||"project";
-  const apiKey = apiKeys[provider] || "";
+function chunkText(text, size=CHUNK_SIZE){
+  const chunks=[];
+  for(let i=0;i<text.length;i+=size) chunks.push(text.slice(i,i+size));
+  return chunks;
+}
 
-  let url, headers, body, parseResponse;
-
+async function callAI(systemPrompt, userMessage, settings, maxTokens=800){
+  const {provider,model,apiKeys,baseUrl}=settings;
+  const apiKey=apiKeys[provider]||"";
   if(provider==="anthropic"){
-    url = "https://api.anthropic.com/v1/messages";
-    headers = {
-      "Content-Type":"application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    };
-    body = { model, max_tokens:2000, system:SYSTEM_PROMPT,
-      messages:[{role:"user",content:`Project: ${projectName}\n\n${corpus}`}] };
-    parseResponse = d => {
-      if(d.error) throw new Error(d.error.message);
-      return (d.content||[]).filter(b=>b.type==="text").slice(-1)[0]?.text || "";
-    };
-  } else {
-    const base = provider==="openai"  ? "https://api.openai.com"
-               : provider==="ollama"  ? (baseUrl||"http://localhost:11434")
-               : (baseUrl||"");
-    if(!base) throw new Error("Base URL required for custom provider.");
-    url = `${base}/v1/chat/completions`;
-    headers = {"Content-Type":"application/json"};
-    if(apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-    body = { model, max_tokens:2000,
-      messages:[{role:"system",content:SYSTEM_PROMPT},{role:"user",content:`Project: ${projectName}\n\n${corpus}`}] };
-    parseResponse = d => {
-      if(d.error) throw new Error(typeof d.error==="string"?d.error:d.error.message||"API error");
-      return d.choices?.[0]?.message?.content || "";
-    };
+    const res=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model,max_tokens:maxTokens,system:systemPrompt,messages:[{role:"user",content:userMessage}]})
+    });
+    if(!res.ok){const t=await res.text().catch(()=>"");throw new Error(`API ${res.status}${t?": "+t.slice(0,120):""}`);}
+    const d=await res.json();
+    if(d.error) throw new Error(d.error.message);
+    return (d.content||[]).filter(b=>b.type==="text").slice(-1)[0]?.text||"";
   }
-
-  setStatus(`analysing with ${provider}…`);
-  const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(body)});
+  const base=provider==="openai"?"https://api.openai.com":provider==="ollama"?(baseUrl||"http://localhost:11434"):(baseUrl||"");
+  if(!base) throw new Error("Base URL required for custom provider.");
+  const res=await fetch(`${base}/v1/chat/completions`,{
+    method:"POST",
+    headers:{"Content-Type":"application/json",...(apiKey?{"Authorization":`Bearer ${apiKey}`}:{})},
+    body:JSON.stringify({model,max_tokens:maxTokens,messages:[{role:"system",content:systemPrompt},{role:"user",content:userMessage}]})
+  });
   if(!res.ok){const t=await res.text().catch(()=>"");throw new Error(`API ${res.status}${t?": "+t.slice(0,120):""}`);}
   const d=await res.json();
-  const raw=parseResponse(d).replace(/```json|```/g,"").trim();
-  if(!raw)throw new Error("Empty response — try again");
-  const match=raw.match(/\{[\s\S]*\}/);
-  if(!match)throw new Error("Could not parse JSON from response");
+  if(d.error) throw new Error(typeof d.error==="string"?d.error:d.error.message||"API error");
+  return d.choices?.[0]?.message?.content||"";
+}
+
+async function analyzeLocalFiles(files, setStatus, settings){
+  const relevant=[...files]
+    .filter(f=>RELEVANT.test(f.name)&&!SKIP.test(f.webkitRelativePath||f.name))
+    .sort((a,b)=>scoreFile(a.webkitRelativePath||a.name)-scoreFile(b.webkitRelativePath||b.name))
+    .slice(0,MAX_FILES);
+  if(!relevant.length) throw new Error("No supported source files found.");
+
+  setStatus(`reading ${relevant.length} files…`);
+  const fileTexts=await Promise.all(relevant.map(async f=>{
+    try{const t=await readFile(f);return{name:f.webkitRelativePath||f.name,text:t};}
+    catch{return null;}
+  }));
+
+  const allChunks=[];
+  fileTexts.filter(Boolean).forEach(({name,text})=>{
+    chunkText(text).forEach((chunk,i,arr)=>allChunks.push({name,chunk,idx:i,total:arr.length}));
+  });
+  const capped=allChunks.slice(0,MAX_CHUNKS);
+
+  const BATCH=4;
+  const summaries=[];
+  for(let i=0;i<capped.length;i+=BATCH){
+    const batch=capped.slice(i,i+BATCH);
+    setStatus(`summarising chunk ${Math.min(i+BATCH,capped.length)}/${capped.length}…`);
+    const results=await Promise.all(batch.map(async({name,chunk,idx,total})=>{
+      const label=total>1?`${name} [part ${idx+1}/${total}]`:name;
+      try{
+        const text=await callAI(CHUNK_SUMMARY_PROMPT,`File: ${label}\n\n${chunk}`,settings,400);
+        return `[${label}]\n${text.trim()}`;
+      }catch{return `[${label}]: (summary failed)`;}
+    }));
+    summaries.push(...results);
+  }
+
+  const projectName=relevant[0]?.webkitRelativePath?.split("/")[0]||"project";
+  setStatus("generating diagram…");
+  const raw=await callAI(
+    SYNTHESIS_PROMPT,
+    `Project: ${projectName}\n\nModule summaries:\n\n${summaries.join("\n\n")}`,
+    settings,
+    3000
+  );
+  const cleaned=raw.replace(/```json|```/g,"").trim();
+  if(!cleaned) throw new Error("Empty response — try again");
+  const match=cleaned.match(/\{[\s\S]*\}/);
+  if(!match) throw new Error("Could not parse JSON from response");
   return JSON.parse(match[0]);
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+// ── diff helpers ─────────────────────────────────────────────────────────────
+function computeDiagramDiff(base, current, path="root"){
+  const bNodes=new Map((base.nodes||[]).map(n=>[n.id,n]));
+  const cNodes=new Map((current.nodes||[]).map(n=>[n.id,n]));
+  const bEdges=new Map((base.edges||[]).map(e=>[e.id,e]));
+  const cEdges=new Map((current.edges||[]).map(e=>[e.id,e]));
+  const results=[];
+  const added=current.nodes.filter(n=>!bNodes.has(n.id));
+  const removed=base.nodes.filter(n=>!cNodes.has(n.id));
+  const modified=current.nodes.filter(n=>{
+    const o=bNodes.get(n.id);if(!o)return false;
+    return o.label!==n.label||o.type!==n.type||o.desc!==n.desc;
+  });
+  const addedE=current.edges.filter(e=>!bEdges.has(e.id)).map(e=>({
+    ...e,fromLabel:current.nodes.find(n=>n.id===e.from)?.label||e.from,
+    toLabel:current.nodes.find(n=>n.id===e.to)?.label||e.to,
+  }));
+  const removedE=base.edges.filter(e=>!cEdges.has(e.id)).map(e=>({
+    ...e,fromLabel:base.nodes.find(n=>n.id===e.from)?.label||e.from,
+    toLabel:base.nodes.find(n=>n.id===e.to)?.label||e.to,
+  }));
+  if(added.length||removed.length||modified.length||addedE.length||removedE.length)
+    results.push({path,added,removed,modified,addedE,removedE,baseNodes:base.nodes});
+  current.nodes.forEach(n=>{
+    if(!n.children?.nodes?.length)return;
+    const bNode=bNodes.get(n.id);
+    const bChildren=bNode?.children||{nodes:[],edges:[]};
+    results.push(...computeDiagramDiff(bChildren,n.children,`${path} › ${n.label}`));
+  });
+  return results;
+}
+
 function Label({children}){return <div style={{fontSize:9,fontWeight:700,letterSpacing:1.8,color:"#8a8880",marginTop:4}}>{children}</div>;}
 function HR(){return <div style={{borderTop:"1px solid #e4e1d8",margin:"4px 0"}}/>;}
 
@@ -584,6 +669,7 @@ export default function App(){
   const [detectedLayout,setDetectedLayout] = useState("lr");
   const [layoutFlash,setLayoutFlash]   = useState(false);
   const [settings,setSettings] = useState(()=>({...defaultSettings(),...loadSettings()}));
+  const [aiBaseDiagram,setAiBaseDiagram] = useState(null);
 
   // Derived current level (re-computed on every render — cheap)
   const currentLevel = getDiagramAtPath(rootDiagram, navPath);
@@ -801,7 +887,9 @@ export default function App(){
       setDetectedLayout(effective);
       setLayoutType("auto");
       const pos=computeLayout(newNodes,newEdges,effective);
-      setRootDiagram({nodes:applyPositions(newNodes,pos), edges:newEdges});
+      const positioned=applyPositions(newNodes,pos);
+      setRootDiagram({nodes:positioned, edges:newEdges});
+      setAiBaseDiagram({nodes:positioned, edges:newEdges});
       setNavPath([]);
       setSel(null);setPan({x:60,y:60});setZoom(0.78);
     }catch(e){setErr(e.message);}
@@ -838,6 +926,7 @@ export default function App(){
         const parsed = JSON.parse(ev.target.result);
         if(!Array.isArray(parsed.nodes)||!Array.isArray(parsed.edges)) throw new Error("Invalid format");
         setRootDiagram(parsed); setNavPath([]); setSel(null);
+        setAiBaseDiagram(null);
         setPan({x:60,y:60}); setZoom(0.84);
         setErr("");
       } catch(err) { setErr("Import failed: "+err.message); }
@@ -866,7 +955,33 @@ export default function App(){
       }).join("\n");
       return [nl,el].filter(Boolean).join("\n");
     };
-    setPromptTxt(`# Architecture refactoring blueprint\n\nRestructure the codebase to implement the architecture below exactly.\n\n## Modules / components\n\n${renderDiagram(rootDiagram)}\n\n## Steps\n\n1. Create module/directory structure matching the components above\n2. Implement each with a single clear responsibility matching its type\n3. Wire data flows exactly as specified — no extra coupling\n4. Define clean interfaces at every boundary\n5. Preserve all existing business logic\n6. Add types and annotations throughout\n7. Write unit tests for every new or changed module\n8. Update all imports, exports, dependency declarations\n\nWork from data layer outward: data stores → services → API → UI.\nConfirm each step before proceeding.`);
+
+    let diffSection="";
+    if(aiBaseDiagram){
+      const diffs=computeDiagramDiff(aiBaseDiagram,rootDiagram);
+      if(diffs.length){
+        const lines=["\n## Modifications from AI baseline\n","Apply these user-defined changes on top of the architecture above:\n"];
+        diffs.forEach(({path,added,removed,modified,addedE,removedE,baseNodes})=>{
+          lines.push(`### ${path}`);
+          added.forEach(n=>lines.push(`- Added node: **${n.label}** [${n.type}]${n.desc?": "+n.desc:""}`));
+          removed.forEach(n=>lines.push(`- Removed node: **${n.label}** [${n.type}]`));
+          modified.forEach(n=>{
+            const o=baseNodes.find(x=>x.id===n.id);
+            const ch=[];
+            if(o?.label!==n.label) ch.push(`label "${o?.label}" → "${n.label}"`);
+            if(o?.type!==n.type) ch.push(`type ${o?.type} → ${n.type}`);
+            if(o?.desc!==n.desc) ch.push(`desc "${o?.desc||""}" → "${n.desc||""}"`);
+            lines.push(`- Modified **${n.label}**: ${ch.join(", ")}`);
+          });
+          addedE.forEach(e=>lines.push(`- Added connection: ${e.fromLabel} ${e.bidir?"↔":"→"} ${e.toLabel}${e.label?" ("+e.label+")":""}`));
+          removedE.forEach(e=>lines.push(`- Removed connection: ${e.fromLabel} ${e.bidir?"↔":"→"} ${e.toLabel}${e.label?" ("+e.label+")":""}`));
+          lines.push("");
+        });
+        diffSection=lines.join("\n");
+      }
+    }
+
+    setPromptTxt(`# Architecture refactoring blueprint\n\nRestructure the codebase to implement the architecture below exactly.\n\n## Modules / components\n\n${renderDiagram(rootDiagram)}${diffSection}\n## Steps\n\n1. Create module/directory structure matching the components above\n2. Implement each with a single clear responsibility matching its type\n3. Wire data flows exactly as specified — no extra coupling\n4. Define clean interfaces at every boundary\n5. Preserve all existing business logic\n6. Add types and annotations throughout\n7. Write unit tests for every new or changed module\n8. Update all imports, exports, dependency declarations\n\nWork from data layer outward: data stores → services → API → UI.\nConfirm each step before proceeding.`);
     setPanel("prompt");
   };
 
@@ -885,7 +1000,8 @@ export default function App(){
     return {...e, path, x1, y1, x2, y2, mx, my};
   }).filter(Boolean);
   const cursor=mode==="ADD_NODE"?"crosshair":mode==="DELETE"?"not-allowed":panSt?"grabbing":"default";
-  const nodeFill=t=>({process:P.paper,data:"#f0ece0",api:"#f5f2e8",ui:P.paper,external:"#edeadf"}[t]||P.paper);
+  const nodeFill  = t => NODE_TYPES[t]?.color.bg || P.paper;
+  const nodeBorder= t => NODE_TYPES[t]?.color.bd || P.ink;
   const effectiveLabel=LAYOUT_OPTIONS.find(o=>o.id===(layoutType==="auto"?detectedLayout:layoutType))?.label||"";
 
   return(
@@ -920,7 +1036,7 @@ export default function App(){
         {mode==="ADD_NODE"&&(
           <select value={newType} onChange={e=>setNewType(e.target.value)}
             style={{...IS,width:"auto",marginTop:0,padding:"3px 7px"}}>
-            {Object.entries(NT).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+            {Object.entries(NODE_TYPES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
           </select>
         )}
 
@@ -1029,7 +1145,7 @@ export default function App(){
                 <input value={selNode.label} onChange={e=>updNode(selNode.id,{label:e.target.value})} style={IS}/>
                 <Label>type</Label>
                 <select value={selNode.type} onChange={e=>updNode(selNode.id,{type:e.target.value})} style={IS}>
-                  {Object.entries(NT).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+                  {Object.entries(NODE_TYPES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
                 </select>
                 <Label>description</Label>
                 <textarea value={selNode.desc||""} onChange={e=>updNode(selNode.id,{desc:e.target.value})} rows={2} style={{...IS,resize:"vertical"}}/>
@@ -1315,7 +1431,7 @@ export default function App(){
 
           <div style={{position:"absolute",bottom:12,left:12,fontSize:9,color:P.dim,fontFamily:"'Courier Prime',monospace",fontStyle:"italic"}}>
             {MODES.find(m=>m.id===mode)?.label}
-            {mode==="ADD_NODE"&&<span style={{marginLeft:4}}>· {NT[newType]?.label}</span>}
+            {mode==="ADD_NODE"&&<span style={{marginLeft:4}}>· {NODE_TYPES[newType]?.label}</span>}
           </div>
         </div>
       </div>
