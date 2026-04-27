@@ -1177,6 +1177,22 @@ export default function App(){
                 </select>
                 <Label>description</Label>
                 <textarea value={selNode.desc||""} onChange={e=>updNode(selNode.id,{desc:e.target.value})} rows={2} style={{...IS,resize:"vertical"}}/>
+                {(NODE_TYPES[selNode.type]?.fields||[]).map(f=>(
+                  <div key={f.key}>
+                    <Label>{f.label}</Label>
+                    {f.type==="select"
+                      ? <select value={selNode[f.key]||f.options[0]} onChange={e=>updNode(selNode.id,{[f.key]:e.target.value})} style={IS}>
+                          {f.options.map(o=><option key={o} value={o}>{o}</option>)}
+                        </select>
+                      : <input value={selNode[f.key]||""} onChange={e=>updNode(selNode.id,{[f.key]:e.target.value})} placeholder={f.placeholder||""} style={IS}/>
+                    }
+                  </div>
+                ))}
+                {selNode.type==="decision"&&(
+                  <div style={{fontSize:9,color:P.dim,fontStyle:"italic",lineHeight:1.6,marginTop:3}}>
+                    add an edge for each branch — use the edge label as the condition value
+                  </div>
+                )}
                 <div style={{display:"flex",gap:6}}>
                   <div style={{flex:1}}><Label>x</Label><input type="number" value={selNode.x} onChange={e=>updNode(selNode.id,{x:+e.target.value})} style={IS}/></div>
                   <div style={{flex:1}}><Label>y</Label><input type="number" value={selNode.y} onChange={e=>updNode(selNode.id,{y:+e.target.value})} style={IS}/></div>
@@ -1210,7 +1226,19 @@ export default function App(){
                 <button onClick={()=>updNode(selNode.id,{outputs:[...(selNode.outputs||[]),{id:uid(),name:"out",type:"any"}]})} style={{...BS(false),padding:"3px 8px",fontSize:10,width:"100%"}}>+ add output</button>
                 <HR/>
 
+                {NODE_TYPES[selNode.type]?.hasChildren&&(
+                  <button onClick={()=>enterNode(selNode)} style={{...BS(false),padding:"5px",fontSize:10,width:"100%",marginTop:4}}>
+                    ⊞ enter {selNode.type==="loop"?"loop body":"recovery body"}
+                  </button>
+                )}
                 <button onClick={()=>{setEdgeSrc(selNode.id);setMode("ADD_EDGE");}} style={{...BS(false),padding:"5px",fontSize:10,width:"100%",marginTop:4}}>→ connect to another node</button>
+                <HR/>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:1.8,color:"#a83228",marginTop:2}}>ON ERROR</div>
+                <button onClick={()=>{setSel(null);setEdgeSrc(selNode.id);setPendingEdgeKind("error");setMode("ADD_EDGE");}}
+                  style={{...BS(false),padding:"5px",fontSize:10,width:"100%",borderColor:"#a83228",color:"#a83228"}}>
+                  + add error handler
+                </button>
+                <HR/>
                 <button onClick={()=>{setNodes(ns=>ns.filter(n=>n.id!==selNode.id));setEdges(es=>es.filter(e=>e.from!==selNode.id&&e.to!==selNode.id));setSel(null);}} style={{...BS(false,true),padding:"5px",fontSize:10,width:"100%"}}>× delete node</button>
               </>)}
 
