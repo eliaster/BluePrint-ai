@@ -547,7 +547,9 @@ async function callAI(systemPrompt, userMessage, settings, maxTokens=800){
     const d=await res.json();
     if(d.error) throw new Error(d.error.message);
     const text=(d.content||[]).filter(b=>b.type==="text").slice(-1)[0]?.text||"";
-    console.log(`[callAI] ✓ ${Math.round(performance.now()-t0)}ms — ${d.usage?.input_tokens??"-"} in / ${d.usage?.output_tokens??"-"} out tokens`);
+    const stopReason=d.stop_reason||"?";
+    if(stopReason==="max_tokens") console.warn(`[callAI] ⚠ stop_reason=max_tokens — response was TRUNCATED (limit: ${maxTokens})`);
+    console.log(`[callAI] ✓ ${Math.round(performance.now()-t0)}ms — ${d.usage?.input_tokens??"-"} in / ${d.usage?.output_tokens??"-"} out — stop=${stopReason}`);
     return text;
   }
   const base=provider==="openai"?"https://api.openai.com":provider==="ollama"?(baseUrl||"http://localhost:11434"):(baseUrl||"");
@@ -561,7 +563,9 @@ async function callAI(systemPrompt, userMessage, settings, maxTokens=800){
   const d=await res.json();
   if(d.error) throw new Error(typeof d.error==="string"?d.error:d.error.message||"API error");
   const text=d.choices?.[0]?.message?.content||"";
-  console.log(`[callAI] ✓ ${Math.round(performance.now()-t0)}ms — ${d.usage?.prompt_tokens??"-"} in / ${d.usage?.completion_tokens??"-"} out tokens`);
+  const finishReason=d.choices?.[0]?.finish_reason||"?";
+  if(finishReason==="length") console.warn(`[callAI] ⚠ finish_reason=length — response was TRUNCATED (limit: ${maxTokens})`);
+  console.log(`[callAI] ✓ ${Math.round(performance.now()-t0)}ms — ${d.usage?.prompt_tokens??"-"} in / ${d.usage?.completion_tokens??"-"} out — stop=${finishReason}`);
   return text;
 }
 
@@ -621,13 +625,20 @@ async function analyzeLocalFiles(files, setStatus, settings){
     SYNTHESIS_PROMPT,
     `Project: ${projectName}\n\nModule summaries:\n\n${summaries.join("\n\n")}`,
     settings,
-    3000
+    8000
   );
   const cleaned=raw.replace(/```json|```/g,"").trim();
   if(!cleaned) throw new Error("Empty response — try again");
   const match=cleaned.match(/\{[\s\S]*\}/);
   if(!match) throw new Error("Could not parse JSON from response");
-  const result=JSON.parse(match[0]);
+  console.log(`[4/4] raw response length: ${cleaned.length} chars — last 120: …${cleaned.slice(-120)}`);
+  let result;
+  try{ result=JSON.parse(match[0]); }
+  catch(e){
+    console.error("[analyzeLocalFiles] JSON parse failed:",e.message);
+    console.error("  tail of response:",cleaned.slice(-300));
+    throw new Error(`JSON Parse error: ${e.message} — the model response was likely truncated`);
+  }
   const nodeCount=(result.nodes||[]).length;
   const edgeCount=(result.edges||[]).length;
   console.log(`[analyzeLocalFiles] ✓ done in ${(( performance.now()-t0)/1000).toFixed(1)}s — ${nodeCount} nodes, ${edgeCount} edges`);
