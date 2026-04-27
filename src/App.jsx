@@ -687,6 +687,9 @@ export default function App(){
   const [layoutFlash,setLayoutFlash]   = useState(false);
   const [settings,setSettings] = useState(()=>({...defaultSettings(),...loadSettings()}));
   const [aiBaseDiagram,setAiBaseDiagram] = useState(null);
+  const [scenarioOverride,setScenarioOverride] = useState(null); // null | "new" | "update"
+  const autoScenario   = aiBaseDiagram===null ? "new" : "update";
+  const activeScenario = scenarioOverride || autoScenario;
 
   // Derived current level (re-computed on every render — cheap)
   const currentLevel = getDiagramAtPath(rootDiagram, navPath);
@@ -918,6 +921,7 @@ export default function App(){
       const positioned=applyPositions(newNodes,pos);
       setRootDiagram({nodes:positioned, edges:newEdges});
       setAiBaseDiagram({nodes:positioned, edges:newEdges});
+      setScenarioOverride(null);
       setNavPath([]);
       setSel(null);setPan({x:60,y:60});setZoom(0.78);
     }catch(e){setErr(e.message);}
@@ -1093,6 +1097,23 @@ export default function App(){
           {nodes.length} nodes · {edges.length} edges · {Math.round(zoom*100)}%
         </span>
 
+        <div style={{display:"flex",alignItems:"center",gap:3}}>
+          <select
+            value={activeScenario}
+            onChange={e=>{const v=e.target.value;setScenarioOverride(v===autoScenario?null:v);}}
+            title={scenarioOverride?"manual override":"auto-detected"}
+            style={{...IS,marginTop:0,padding:"3px 7px",width:"auto",
+              fontStyle:scenarioOverride?"normal":"italic",
+              color:scenarioOverride?P.ink:P.dim}}>
+            <option value="new">{scenarioOverride===null&&autoScenario==="new"?"auto: ":""}New Project</option>
+            <option value="update">{scenarioOverride===null&&autoScenario==="update"?"auto: ":""}Update Existing</option>
+          </select>
+          {scenarioOverride&&(
+            <button onClick={()=>setScenarioOverride(null)}
+              title="revert to auto"
+              style={{...BS(false),padding:"3px 6px",fontSize:11}}>×</button>
+          )}
+        </div>
         <button onClick={generatePrompt}
           style={{...BS(false),borderColor:P.ink,color:P.ink,fontWeight:700,padding:"4px 14px"}}>
           generate prompt →
