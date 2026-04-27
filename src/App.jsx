@@ -534,6 +534,9 @@ function chunkText(text, size=CHUNK_SIZE){
 async function callAI(systemPrompt, userMessage, settings, maxTokens=800){
   const {provider,model,apiKeys,baseUrl}=settings;
   const apiKey=apiKeys[provider]||"";
+  const msgPreview=userMessage.slice(0,80).replace(/\n/g," ");
+  console.log(`[callAI] provider=${provider} model=${model} maxTokens=${maxTokens} msg="${msgPreview}…"`);
+  const t0=performance.now();
   if(provider==="anthropic"){
     const res=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
@@ -543,7 +546,9 @@ async function callAI(systemPrompt, userMessage, settings, maxTokens=800){
     if(!res.ok){const t=await res.text().catch(()=>"");throw new Error(`API ${res.status}${t?": "+t.slice(0,120):""}`);}
     const d=await res.json();
     if(d.error) throw new Error(d.error.message);
-    return (d.content||[]).filter(b=>b.type==="text").slice(-1)[0]?.text||"";
+    const text=(d.content||[]).filter(b=>b.type==="text").slice(-1)[0]?.text||"";
+    console.log(`[callAI] ✓ ${Math.round(performance.now()-t0)}ms — ${d.usage?.input_tokens??"-"} in / ${d.usage?.output_tokens??"-"} out tokens`);
+    return text;
   }
   const base=provider==="openai"?"https://api.openai.com":provider==="ollama"?(baseUrl||"http://localhost:11434"):(baseUrl||"");
   if(!base) throw new Error("Base URL required for custom provider.");
@@ -555,14 +560,21 @@ async function callAI(systemPrompt, userMessage, settings, maxTokens=800){
   if(!res.ok){const t=await res.text().catch(()=>"");throw new Error(`API ${res.status}${t?": "+t.slice(0,120):""}`);}
   const d=await res.json();
   if(d.error) throw new Error(typeof d.error==="string"?d.error:d.error.message||"API error");
-  return d.choices?.[0]?.message?.content||"";
+  const text=d.choices?.[0]?.message?.content||"";
+  console.log(`[callAI] ✓ ${Math.round(performance.now()-t0)}ms — ${d.usage?.prompt_tokens??"-"} in / ${d.usage?.completion_tokens??"-"} out tokens`);
+  return text;
 }
 
 async function analyzeLocalFiles(files, setStatus, settings){
+  const t0=performance.now();
+  console.group("[analyzeLocalFiles] starting analysis");
+
   const relevant=[...files]
     .filter(f=>RELEVANT.test(f.name)&&!SKIP.test(f.webkitRelativePath||f.name))
     .sort((a,b)=>scoreFile(a.webkitRelativePath||a.name)-scoreFile(b.webkitRelativePath||b.name))
     .slice(0,MAX_FILES);
+  console.log(`[1/4] file selection: ${files.length} total → ${relevant.length} relevant (max ${MAX_FILES})`);
+  relevant.forEach(f=>console.log(`      + ${f.webkitRelativePath||f.name}`));
   if(!relevant.length) throw new Error("No supported source files found.");
 
   setStatus(`reading ${relevant.length} files…`);
@@ -570,30 +582,41 @@ async function analyzeLocalFiles(files, setStatus, settings){
     try{const t=await readFile(f);return{name:f.webkitRelativePath||f.name,text:t};}
     catch{return null;}
   }));
+  const loaded=fileTexts.filter(Boolean);
+  const totalChars=loaded.reduce((s,f)=>s+f.text.length,0);
+  console.log(`[2/4] reading: ${loaded.length} files read — ${totalChars.toLocaleString()} chars total`);
 
   const allChunks=[];
   fileTexts.filter(Boolean).forEach(({name,text})=>{
     chunkText(text).forEach((chunk,i,arr)=>allChunks.push({name,chunk,idx:i,total:arr.length}));
   });
   const capped=allChunks.slice(0,MAX_CHUNKS);
+  console.log(`[3/4] chunking: ${allChunks.length} chunks → capped at ${capped.length} (max ${MAX_CHUNKS})`);
 
   const BATCH=4;
   const summaries=[];
   for(let i=0;i<capped.length;i+=BATCH){
     const batch=capped.slice(i,i+BATCH);
-    setStatus(`summarising chunk ${Math.min(i+BATCH,capped.length)}/${capped.length}…`);
+    const batchEnd=Math.min(i+BATCH,capped.length);
+    setStatus(`summarising chunk ${batchEnd}/${capped.length}…`);
+    console.log(`      summarising batch ${Math.floor(i/BATCH)+1}/${Math.ceil(capped.length/BATCH)}: chunks ${i+1}–${batchEnd}`);
     const results=await Promise.all(batch.map(async({name,chunk,idx,total})=>{
       const label=total>1?`${name} [part ${idx+1}/${total}]`:name;
       try{
         const text=await callAI(CHUNK_SUMMARY_PROMPT,`File: ${label}\n\n${chunk}`,settings,400);
         return `[${label}]\n${text.trim()}`;
-      }catch{return `[${label}]: (summary failed)`;}
+      }catch(err){
+        console.warn(`      ✗ summary failed for ${label}:`,err.message);
+        return `[${label}]: (summary failed)`;
+      }
     }));
     summaries.push(...results);
   }
+  console.log(`      ${summaries.length} summaries collected`);
 
   const projectName=relevant[0]?.webkitRelativePath?.split("/")[0]||"project";
   setStatus("generating diagram…");
+  console.log(`[4/4] synthesis: generating diagram for project "${projectName}" with ${summaries.length} summaries…`);
   const raw=await callAI(
     SYNTHESIS_PROMPT,
     `Project: ${projectName}\n\nModule summaries:\n\n${summaries.join("\n\n")}`,
@@ -604,7 +627,12 @@ async function analyzeLocalFiles(files, setStatus, settings){
   if(!cleaned) throw new Error("Empty response — try again");
   const match=cleaned.match(/\{[\s\S]*\}/);
   if(!match) throw new Error("Could not parse JSON from response");
-  return JSON.parse(match[0]);
+  const result=JSON.parse(match[0]);
+  const nodeCount=(result.nodes||[]).length;
+  const edgeCount=(result.edges||[]).length;
+  console.log(`[analyzeLocalFiles] ✓ done in ${(( performance.now()-t0)/1000).toFixed(1)}s — ${nodeCount} nodes, ${edgeCount} edges`);
+  console.groupEnd();
+  return result;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -931,12 +959,14 @@ export default function App(){
     setPromptTitle(arr[0]?.webkitRelativePath?.split("/")[0]||arr[0]?.name||"project");
     setErr("");
     if(!relevant.length){setErr("No supported source files found.");return;}
+    console.log(`[handleFiles] project="${projectName}" — ${relevant.length} relevant / ${arr.length} total files — provider=${settings.provider} model=${settings.model}`);
     setBusy(true);
     try{
       const d=await analyzeLocalFiles(arr,setStatus,settings);
       const newNodes=d.nodes.map(n=>({...n,desc:n.desc||""}));
       const newEdges=d.edges.map(e=>({...e,bidir:e.bidir||false}));
       const effective=detectLayout(newNodes,newEdges);
+      console.log(`[handleFiles] layout detected: ${effective} — applying positions…`);
       setDetectedLayout(effective);
       setLayoutType("auto");
       const pos=computeLayout(newNodes,newEdges,effective);
@@ -946,7 +976,11 @@ export default function App(){
       setScenarioOverride(null);
       setNavPath([]);
       setSel(null);setPan({x:60,y:60});setZoom(0.78);
-    }catch(e){setErr(e.message);}
+      console.log(`[handleFiles] ✓ diagram ready — ${positioned.length} nodes, ${newEdges.length} edges`);
+    }catch(e){
+      console.error("[handleFiles] ✗ error:",e.message);
+      setErr(e.message);
+    }
     finally{setBusy(false);setStatus("");}
   };
 
