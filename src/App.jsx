@@ -668,6 +668,7 @@ export default function App(){
   const [sel,setSel]           = useState(null);
   const [edgeSrc,setEdgeSrc]   = useState(null);
   const [edgeSrcPort,setEdgeSrcPort] = useState(null); // {portId, portType} | null
+  const [pendingEdgeKind,setPendingEdgeKind] = useState(null);
   const [drag,setDrag]         = useState(null);
   const [panSt,setPanSt]       = useState(null);
   const [pan,setPan]           = useState({x:60,y:60});
@@ -821,15 +822,26 @@ export default function App(){
     if(mode==="DELETE"){setNodes(ns=>ns.filter(n=>n.id!==id));setEdges(es=>es.filter(e=>e.from!==id&&e.to!==id));if(sel?.id===id)setSel(null);return;}
     if(mode==="ADD_EDGE"){
       if(!edgeSrc){setEdgeSrc(id);setEdgeSrcPort(null);return;}
-      if(edgeSrc!==id) setEdges(es=>[...es,mkEdge(edgeSrc,id,"",edgeSrcPort?.portId||null,null)]);
-      else             setEdges(es=>[...es,mkEdge(id,id,"")]);
-      setEdgeSrc(null);setEdgeSrcPort(null);setMode("SELECT");
+      if(edgeSrc!==id){
+        const tgt=nodes.find(n=>n.id===id);
+        if(pendingEdgeKind==="error"&&tgt?.type!=="error"){
+          setErr("Connect error handler only to an Error Handler node (⚠)");
+          setTimeout(()=>setErr(""),3000);
+          setEdgeSrc(null);setEdgeSrcPort(null);setPendingEdgeKind(null);setMode("SELECT");
+          return;
+        }
+        const extra=pendingEdgeKind?{kind:pendingEdgeKind}:{};
+        setEdges(es=>[...es,{...mkEdge(edgeSrc,id,"",edgeSrcPort?.portId||null,null),...extra}]);
+      } else {
+        setEdges(es=>[...es,mkEdge(id,id,"")]);
+      }
+      setEdgeSrc(null);setEdgeSrcPort(null);setPendingEdgeKind(null);setMode("SELECT");
       return;
     }
     setSel({k:"node",id});
     const node=nodes.find(n=>n.id===id), pt=toSvg(e);
     setDrag({id,ox:pt.x-node.x,oy:pt.y-node.y});
-  },[mode,edgeSrc,edgeSrcPort,nodes,sel,toSvg]);
+  },[mode,edgeSrc,edgeSrcPort,pendingEdgeKind,nodes,sel,toSvg]);
 
   const onPortDown=useCallback((e, nodeId, portId, portType, side)=>{
     e.stopPropagation();
@@ -1346,6 +1358,9 @@ export default function App(){
                   </marker>
                 </g>
               ))}
+              <marker id="mk-err" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L7,3 z" fill="#a83228"/>
+              </marker>
             </defs>
 
             <rect width="100%" height="100%" fill={P.cream}/>
@@ -1362,10 +1377,18 @@ export default function App(){
                   <g key={e.id} onClick={ev=>onEdgeClick(ev,e.id)} style={{cursor:"pointer"}}>
                     <path d={e.path} stroke="transparent" strokeWidth={14} fill="none"/>
                     <path d={e.path} fill="none"
-                      stroke={P.ink} strokeWidth={isSel?1.5:.85} opacity={isSel?1:.42}
-                      markerEnd={`url(#${isSel?"mk-s":"mk"})`}
+                      stroke={e.kind==="error"?"#a83228":P.ink}
+                      strokeWidth={isSel?1.5:.85}
+                      opacity={isSel?1:.42}
+                      markerEnd={e.kind==="error"?"url(#mk-err)":`url(#${isSel?"mk-s":"mk"})`}
                       markerStart={e.bidir&&!e.selfLoop?`url(#${isSel?"mk-bs":"mk-b"})`:undefined}
-                      strokeDasharray={mode==="DELETE"?"5 3":undefined}/>
+                      strokeDasharray={e.kind==="error"?"5 3":(mode==="DELETE"?"5 3":undefined)}/>
+                    {e.kind==="error"&&!e.label&&(
+                      <g>
+                        <rect x={e.mx-22} y={e.my-13} width={44} height={14} fill={P.cream}/>
+                        <text x={e.mx} y={e.my-2} textAnchor="middle" fontSize={9} fill="#a83228" fontFamily="'Courier Prime',monospace" fontStyle="italic">⚠ onError</text>
+                      </g>
+                    )}
                     {e.label&&(
                       <g>
                         <rect x={e.mx-e.label.length*3.2} y={e.my-13} width={e.label.length*6.4} height={14} fill={P.cream}/>
