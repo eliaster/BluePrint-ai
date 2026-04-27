@@ -1064,7 +1064,16 @@ export default function App(){
         {mode==="ADD_NODE"&&(
           <select value={newType} onChange={e=>setNewType(e.target.value)}
             style={{...IS,width:"auto",marginTop:0,padding:"3px 7px"}}>
-            {Object.entries(NODE_TYPES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+            <optgroup label="structural">
+              {["process","data","api","ui","external"].map(k=>(
+                <option key={k} value={k}>{NODE_TYPES[k].label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="logical">
+              {["decision","loop","trigger","error"].map(k=>(
+                <option key={k} value={k}>{NODE_TYPES[k].label}</option>
+              ))}
+            </optgroup>
           </select>
         )}
 
